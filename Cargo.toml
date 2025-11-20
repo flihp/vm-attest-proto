@@ -2,6 +2,7 @@
 name = "vm-attest-trait"
 version = "0.1.0"
 edition = "2024"
+license = "MPL-2.0"
 
 [dependencies]
 attest-data.git = "https://github.com/oxidecomputer/dice-util"
