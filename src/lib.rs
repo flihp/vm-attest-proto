@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use attest_data::AttestDataError as OxAttestDataError;
 use dice_verifier::{
     Attest as OxAttest, AttestError as OxAttestError,
@@ -37,17 +41,6 @@ pub struct MeasurementLog {
     data: Vec<u8>,
 }
 
-/// Errors returned when trying to sign an attestation
-#[derive(Debug, thiserror::Error)]
-pub enum AttestationSignerError {
-    #[error("communication error")]
-    CommunicationError,
-    #[error("error from Oxide attestation interface")]
-    OxideAttestError(#[from] OxAttestError),
-    #[error("error from Oxide attestation data")]
-    OxideAttestDataError(#[from] OxAttestDataError),
-}
-
 /// An interface for obtaining an attestation from the Oxide RoT
 ///
 /// An attestation from the Oxide RoT is an ed25519::Signature.
@@ -56,22 +49,28 @@ pub enum AttestationSignerError {
 /// instead return a serialized signature and specify the algorithms used per
 /// version.
 pub trait AttestationSigner {
+    type Error;
+
     fn attest(
         &self,
         nonce: &Nonce,
         user_data: &[u8],
-    ) -> Result<OxAttestation, AttestationSignerError>;
+    ) -> Result<OxAttestation, Self::Error>;
 
     /// Return all relevant measurement logs, in order of concatenation.
-    fn get_measurement_logs(
-        &self,
-    ) -> Result<Vec<MeasurementLog>, AttestationSignerError>;
+    fn get_measurement_logs(&self) -> Result<Vec<MeasurementLog>, Self::Error>;
 
     /// Return the cert chain for the given RotType.
-    fn get_cert_chain(
-        &self,
-        rot: RotType,
-    ) -> Result<PkiPath, AttestationSignerError>;
+    fn get_cert_chain(&self, rot: RotType) -> Result<PkiPath, Self::Error>;
+}
+
+/// Errors returned when trying to sign an attestation
+#[derive(Debug, thiserror::Error)]
+pub enum AttestMockError {
+    #[error("error from Oxide attestation interface")]
+    OxideAttestError(#[from] OxAttestError),
+    #[error("error from Oxide attestation data")]
+    OxideAttestDataError(#[from] OxAttestDataError),
 }
 
 pub struct AttestMock {
@@ -85,14 +84,17 @@ impl AttestMock {
 }
 
 impl AttestationSigner for AttestMock {
+    type Error = AttestMockError;
+
     fn attest(
         &self,
         nonce: &Nonce,
         user_data: &[u8],
-    ) -> Result<OxAttestation, AttestationSignerError> {
+    ) -> Result<OxAttestation, Self::Error> {
         let mut msg = Sha256::new();
-        msg.update(nonce);
+        // propolis config
         msg.update(user_data);
+        msg.update(nonce);
         let msg = msg.finalize();
 
         // TODO: better types
@@ -100,9 +102,7 @@ impl AttestationSigner for AttestMock {
         Ok(self.oxattest_mock.attest(&nonce)?)
     }
 
-    fn get_measurement_logs(
-        &self,
-    ) -> Result<Vec<MeasurementLog>, AttestationSignerError> {
+    fn get_measurement_logs(&self) -> Result<Vec<MeasurementLog>, Self::Error> {
         let oxide_log = self.oxattest_mock.get_measurement_log()?;
 
         let mut data = vec![0u8; Log::MAX_SIZE];
@@ -117,10 +117,7 @@ impl AttestationSigner for AttestMock {
         Ok(logs)
     }
 
-    fn get_cert_chain(
-        &self,
-        rot: RotType,
-    ) -> Result<PkiPath, AttestationSignerError> {
+    fn get_cert_chain(&self, rot: RotType) -> Result<PkiPath, Self::Error> {
         match rot {
             RotType::OxideHardware => {
                 Ok(self.oxattest_mock.get_certificates()?)
