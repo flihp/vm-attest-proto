@@ -4,7 +4,8 @@
 
 use anyhow::{Context, Result, anyhow};
 use std::env;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::{self, Path, PathBuf};
 
 /// Execute one of the `pki-playground` commands to generate part of the PKI
@@ -56,6 +57,21 @@ fn attest_gen_cmd(command: &str, input: &Path, output: &str) -> Result<()> {
     }
 }
 
+fn path_to_conf(mut file: &File, path: &Path, name: &str) -> Result<()> {
+    if !fs::exists(path).with_context(|| {
+        format!("checking existance of file: {}", path.display())
+    })? {
+        return Err(anyhow!("required file not present: {}", path.display()));
+    }
+
+    Ok(writeln!(
+        file,
+        r##"pub const {}: &str = "{}";"##,
+        name,
+        path.display(),
+    )?)
+}
+
 fn main() -> Result<()> {
     let start_dir = env::current_dir().context("get current dir")?;
     let start_dir =
@@ -104,13 +120,41 @@ fn main() -> Result<()> {
     env::set_current_dir(&out_dir)
         .with_context(|| format!("chdir to {}", out_dir.display()))?;
 
-    // generate keys, certs, and cert chains / lists
+    // generate keys
     pki_gen_cmd("generate-key-pairs", Some(&pki_cfg))?;
+
+    let mut attestation_signer = out_dir.clone();
+    // this file name is chosen by `pki-playground`
+    attestation_signer.push("test-alias.key.pem");
+    let attestation_signer = attestation_signer;
+
+    let dest_path = out_dir.join("config.rs");
+    let config_out = File::create(&dest_path)
+        .with_context(|| format!("creating {}", dest_path.display()))?;
+
+    path_to_conf(&config_out, &attestation_signer, "ATTESTATION_SIGNER")
+        .context("write variable w/ path to attestation signing key")?;
+
+    // generate certs
     pki_gen_cmd("generate-certificates", Some(&pki_cfg))?;
+
+    // generate cert chains / lists
     pki_gen_cmd("generate-certificate-lists", Some(&pki_cfg))?;
+    let mut signer_pkipath = out_dir.clone();
+    signer_pkipath.push("test-alias.certlist.pem");
+    let signer_pkipath = signer_pkipath;
+
+    path_to_conf(&config_out, &signer_pkipath, "SIGNER_PKIPATH")
+        .context("write variable w/ path to attestation signing key")?;
 
     // generate measurement log
     attest_gen_cmd("log", &log_cfg, "log.bin")?;
+    let mut log = out_dir.clone();
+    log.push("log.bin");
+    let log = log;
+
+    path_to_conf(&config_out, &log, "LOG")
+        .context("write variable w/ path to attestation signing key")?;
 
     // generate the corpus of reference measurements
     attest_gen_cmd("corim", &corim_cfg, "corim.cbor")?;
