@@ -1,10 +1,31 @@
-use dice_verifier::{Attest as OxAttest, AttestMock as OxAttestMock};
-use ed25519_dalek::Signature;
+use attest_data::AttestDataError as OxAttestDataError;
+use dice_verifier::{
+    Attest as OxAttest, AttestError as OxAttestError,
+    AttestMock as OxAttestMock, Attestation as OxAttestation, Log,
+};
+use hubpack::SerializedSize;
+use sha2::{Digest, Sha256};
 use x509_cert::PkiPath;
 
 /// User chosen value. Probably random data. Must not be reused.
 #[derive(Debug)]
 pub struct Nonce([u8; 32]);
+
+impl Nonce {
+    pub fn from_platform_rng() -> Result<Self, getrandom::Error> {
+        let mut nonce = [0u8; 32];
+        getrandom::fill(&mut nonce[..])?;
+        let nonce = nonce;
+
+        Ok(Self(nonce))
+    }
+}
+
+impl AsRef<[u8]> for Nonce {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
 
 #[derive(Debug)]
 pub enum RotType {
@@ -17,9 +38,14 @@ pub struct MeasurementLog {
 }
 
 /// Errors returned when trying to sign an attestation
+#[derive(Debug, thiserror::Error)]
 pub enum AttestationSignerError {
-    UnknownRoT,
+    #[error("communication error")]
     CommunicationError,
+    #[error("error from Oxide attestation interface")]
+    OxideAttestError(#[from] OxAttestError),
+    #[error("error from Oxide attestation data")]
+    OxideAttestDataError(#[from] OxAttestDataError),
 }
 
 /// An interface for obtaining an attestation from the Oxide RoT
@@ -34,13 +60,18 @@ pub trait AttestationSigner {
         &self,
         nonce: &Nonce,
         user_data: &[u8],
-    ) -> Result<Signature, AttestationSignerError>;
+    ) -> Result<OxAttestation, AttestationSignerError>;
 
     /// Return all relevant measurement logs, in order of concatenation.
-    fn get_measurement_logs(&self) -> Vec<MeasurementLog>;
+    fn get_measurement_logs(
+        &self,
+    ) -> Result<Vec<MeasurementLog>, AttestationSignerError>;
 
     /// Return the cert chain for the given RotType.
-    fn get_cert_chain(&self, rot: &RotType) -> PkiPath;
+    fn get_cert_chain(
+        &self,
+        rot: RotType,
+    ) -> Result<PkiPath, AttestationSignerError>;
 }
 
 pub struct AttestMock {
@@ -58,16 +89,43 @@ impl AttestationSigner for AttestMock {
         &self,
         nonce: &Nonce,
         user_data: &[u8],
-    ) -> Result<Signature, AttestationSignerError> {
-        todo!("AttestMock::attest: {nonce:?}, {user_data:?}");
+    ) -> Result<OxAttestation, AttestationSignerError> {
+        let mut msg = Sha256::new();
+        msg.update(nonce);
+        msg.update(user_data);
+        let msg = msg.finalize();
+
+        // TODO: better types
+        let nonce = attest_data::Array::<32>(msg.into());
+        Ok(self.oxattest_mock.attest(&nonce)?)
     }
 
-    fn get_measurement_logs(&self) -> Vec<MeasurementLog> {
-        todo!("AttestMock::get_measurement_logs");
+    fn get_measurement_logs(
+        &self,
+    ) -> Result<Vec<MeasurementLog>, AttestationSignerError> {
+        let oxide_log = self.oxattest_mock.get_measurement_log()?;
+
+        let mut data = vec![0u8; Log::MAX_SIZE];
+        let len = hubpack::serialize(&mut data, &oxide_log)
+            .map_err(|_| OxAttestDataError::Deserialize)?;
+        data.truncate(len);
+
+        let mut logs = Vec::new();
+        let rot = RotType::OxideHardware;
+        logs.push(MeasurementLog { rot, data });
+
+        Ok(logs)
     }
 
-    fn get_cert_chain(&self, rot: &RotType) -> PkiPath {
-        todo!("AttestMock::get_cert_chain: {rot:?}");
+    fn get_cert_chain(
+        &self,
+        rot: RotType,
+    ) -> Result<PkiPath, AttestationSignerError> {
+        match rot {
+            RotType::OxideHardware => {
+                Ok(self.oxattest_mock.get_certificates()?)
+            }
+        }
     }
 }
 
@@ -83,8 +141,7 @@ mod test {
     use std::fs;
     use std::path::PathBuf;
 
-    #[test]
-    fn construct() {
+    fn setup() -> AttestMock {
         let out_dir = env::var("OUT_DIR").expect("Could not get OUT_DIR");
         let out_dir = PathBuf::from(out_dir);
         if !fs::exists(&out_dir)
@@ -108,6 +165,55 @@ mod test {
         let oxattest_mock =
             OxAttestMock::load(&pki_path, &log_path, &signer_path)
                 .expect("failed to create OxAttestMock from inputs");
-        let attest = AttestMock::new(oxattest_mock);
+
+        AttestMock::new(oxattest_mock)
+    }
+
+    #[test]
+    fn get_measurement_logs() {
+        let attest = setup();
+
+        let logs = attest.get_measurement_logs().expect("get_measurement_logs");
+        for log in logs {
+            match log.rot {
+                RotType::OxideHardware => assert!(!log.data.is_empty()),
+            }
+        }
+    }
+
+    #[test]
+    fn get_cert_chain() {
+        let attest = setup();
+
+        let _ = attest.get_cert_chain(RotType::OxideHardware);
+    }
+
+    #[test]
+    fn attest() {
+        let attest = setup();
+
+        let nonce =
+            Nonce::from_platform_rng().expect("Nonce from platform RNG");
+        // TODO: should be a crypto key
+        let user_data = vec![0u8, 1];
+
+        let _ = attest
+            .attest(&nonce, &user_data)
+            .expect("AttestMock attest");
+    }
+
+    #[test]
+    fn verify_signature() {
+        todo!("get attestation & verify signature over it");
+    }
+
+    #[test]
+    fn verify_cert_chain() {
+        todo!("get cert chain & \"verify\" it");
+    }
+
+    #[test]
+    fn appraise_log() {
+        todo!("get log and appraise it");
     }
 }

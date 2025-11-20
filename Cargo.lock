@@ -1321,8 +1321,13 @@ name = "vm-attest-trait"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "attest-data",
  "dice-verifier",
  "ed25519-dalek",
+ "getrandom 0.3.4",
+ "hubpack",
+ "sha2",
+ "thiserror",
  "x509-cert",
 ]
 

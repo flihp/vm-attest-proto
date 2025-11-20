@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+attest-data.git = "https://github.com/oxidecomputer/dice-util"
 dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", features = ["mock"] }
 ed25519-dalek = { version = "2.1", default-features = false }
-x509-cert.version = "0.2.5"
+getrandom = "0.3.4"
+hubpack = "0.1.2"
+sha2 = "0.10.9"
+thiserror = "2.0.17"
+x509-cert = "0.2.5"
 
 [build-dependencies]
 anyhow.version = "1.0.100"
