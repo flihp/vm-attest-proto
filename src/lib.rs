@@ -36,6 +36,11 @@ pub enum RotType {
     OxideHardware,
 }
 
+pub struct Attestation {
+    rot: RotType,
+    data: Vec<u8>,
+}
+
 pub struct MeasurementLog {
     rot: RotType,
     data: Vec<u8>,
@@ -51,11 +56,12 @@ pub struct MeasurementLog {
 pub trait AttestationSigner {
     type Error;
 
+    /// Get an attestation from the Oxide RoT entangled with the provided nonce & data.
     fn attest(
         &self,
         nonce: &Nonce,
         user_data: &[u8],
-    ) -> Result<OxAttestation, Self::Error>;
+    ) -> Result<Vec<Attestation>, Self::Error>;
 
     /// Return all relevant measurement logs, in order of concatenation.
     fn get_measurement_logs(&self) -> Result<Vec<MeasurementLog>, Self::Error>;
@@ -67,12 +73,15 @@ pub trait AttestationSigner {
 /// Errors returned when trying to sign an attestation
 #[derive(Debug, thiserror::Error)]
 pub enum AttestMockError {
+    #[error("error deserializing data")]
+    Serialize,
     #[error("error from Oxide attestation interface")]
     OxideAttestError(#[from] OxAttestError),
     #[error("error from Oxide attestation data")]
     OxideAttestDataError(#[from] OxAttestDataError),
 }
 
+/// This type mocks the `propolis` process that backs a VM.
 pub struct AttestMock {
     oxattest_mock: OxAttestMock,
 }
@@ -86,28 +95,47 @@ impl AttestMock {
 impl AttestationSigner for AttestMock {
     type Error = AttestMockError;
 
+    /// `propolis` receives the nonce & user data from the caller.
+    /// It then combines this data w/ attributes describing the VM (rootfs,
+    /// instance UUID etc) and attestations from other RoTs on the platform.
+    /// The format of each attestation is dependent on the associated `RotType`.
+    /// NOTE: the order of the attestations returned is significant
     fn attest(
         &self,
         nonce: &Nonce,
         user_data: &[u8],
-    ) -> Result<OxAttestation, Self::Error> {
+    ) -> Result<Vec<Attestation>, Self::Error> {
         let mut msg = Sha256::new();
-        // propolis config
-        msg.update(user_data);
+        // msg.update w/
+        // - attestations from platform RoTs
+        // - VM cfg data
         msg.update(nonce);
+        msg.update(user_data);
         let msg = msg.finalize();
 
-        // TODO: better types
         let nonce = attest_data::Array::<32>(msg.into());
-        Ok(self.oxattest_mock.attest(&nonce)?)
+        let attest = self.oxattest_mock.attest(&nonce)?;
+
+        let mut data = vec![0u8; OxAttestation::MAX_SIZE];
+        let len = hubpack::serialize(&mut data, &attest)
+            .map_err(|_| AttestMockError::Serialize)?;
+        data.truncate(len);
+        let data = data;
+
+        let mut attestations = Vec::new();
+        let rot = RotType::OxideHardware;
+        attestations.push(Attestation { rot, data });
+
+        Ok(attestations)
     }
 
+    /// Get all measurement logs from the various RoTs on the platform.
     fn get_measurement_logs(&self) -> Result<Vec<MeasurementLog>, Self::Error> {
         let oxide_log = self.oxattest_mock.get_measurement_log()?;
 
         let mut data = vec![0u8; Log::MAX_SIZE];
         let len = hubpack::serialize(&mut data, &oxide_log)
-            .map_err(|_| OxAttestDataError::Deserialize)?;
+            .map_err(|_| AttestMockError::Serialize)?;
         data.truncate(len);
 
         let mut logs = Vec::new();
