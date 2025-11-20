@@ -36,11 +36,13 @@ pub enum RotType {
     OxideHardware,
 }
 
+#[allow(dead_code)]
 pub struct Attestation {
     rot: RotType,
     data: Vec<u8>,
 }
 
+#[allow(dead_code)]
 pub struct MeasurementLog {
     rot: RotType,
     data: Vec<u8>,

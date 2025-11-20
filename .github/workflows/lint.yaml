@@ -1,0 +1,29 @@
+name: linters
+on: [push, pull_request]
+permissions:
+  contents: read
+
+jobs:
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: |
+          git clone --depth=1 https://github.com/oxidecomputer/pki-playground
+          cargo install --path pki-playground
+          git clone --depth=1 https://github.com/oxidecomputer/dice-util
+          cargo install --path dice-util/attest-mock
+      - run: cargo clippy -- --deny warnings
+  format:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
