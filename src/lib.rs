@@ -229,16 +229,19 @@ mod test {
             .expect("AttestMock attest");
     }
 
+    #[should_panic]
     #[test]
     fn verify_signature() {
         todo!("get attestation & verify signature over it");
     }
 
+    #[should_panic]
     #[test]
     fn verify_cert_chain() {
         todo!("get cert chain & \"verify\" it");
     }
 
+    #[should_panic]
     #[test]
     fn appraise_log() {
         todo!("get log and appraise it");
