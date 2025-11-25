@@ -11,6 +11,7 @@ dice-verifier = { git = "https://github.com/oxidecomputer/dice-util", features =
 ed25519-dalek = { version = "2.1", default-features = false }
 getrandom = "0.3.4"
 hubpack = "0.1.2"
+rats-corim.git = "https://github.com/oxidecomputer/rats-corim"
 sha2 = "0.10.9"
 thiserror = "2.0.17"
 x509-cert = "0.2.5"
