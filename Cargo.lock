@@ -1327,6 +1327,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "hubpack",
+ "rats-corim",
  "sha2",
  "thiserror",
  "x509-cert",

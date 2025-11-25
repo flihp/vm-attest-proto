@@ -165,6 +165,14 @@ fn main() -> Result<()> {
     // generate the corpus of reference measurements
     attest_gen_cmd("corim", &corim_cfg, "corim.cbor")?;
 
+    let mut corim = out_dir.clone();
+    corim.push("corim.cbor");
+    let corim = corim;
+
+    path_to_conf(&config_out, &corim, "CORIM").context(
+        "write variable w/ path to reference integrity measurements",
+    )?;
+
     std::env::set_current_dir(start_dir)
         .context("restore current dir to original")?;
 

@@ -354,9 +354,41 @@ mod test {
         assert!(result.is_ok());
     }
 
-    #[should_panic]
     #[test]
     fn appraise_log() {
-        todo!("get log and appraise it");
+        use dice_verifier::{MeasurementSet, ReferenceMeasurements};
+        use rats_corim::Corim;
+        let attest = setup();
+
+        let corim = Corim::from_file(config::CORIM).expect("Corim from file");
+        let rims =
+            ReferenceMeasurements::try_from(std::slice::from_ref(&corim))
+                .expect("Reference integrity measurements from file");
+
+        let logs = attest.get_measurement_logs().expect("get_measurement_logs");
+        let oxlog = logs.iter().find_map(|log| {
+            if log.rot == RotType::OxideHardware {
+                Some(log)
+            } else {
+                None
+            }
+        });
+
+        let (log, _): (Log, _) = if let Some(oxlog) = oxlog {
+            hubpack::deserialize(&oxlog.data)
+                .expect("deserialize hubpacked log")
+        } else {
+            panic!("No measurement log for RotType::OxideHardware");
+        };
+
+        let cert_chain = attest
+            .get_cert_chain(RotType::OxideHardware)
+            .expect("AttestMock get_cert_chain");
+
+        let measurements = MeasurementSet::from_artifacts(&cert_chain, &log)
+            .expect("MeasurementSet from PkiPath and Log");
+
+        let result = dice_verifier::verify_measurements(&measurements, &rims);
+        assert!(result.is_ok());
     }
 }
