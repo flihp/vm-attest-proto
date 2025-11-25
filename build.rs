@@ -137,6 +137,12 @@ fn main() -> Result<()> {
 
     // generate certs
     pki_gen_cmd("generate-certificates", Some(&pki_cfg))?;
+    let mut pki_root = out_dir.clone();
+    pki_root.push("test-root.cert.pem");
+    let pki_root = pki_root;
+
+    path_to_conf(&config_out, &pki_root, "PKI_ROOT")
+        .context("write PKI_ROOT const str to config.rs")?;
 
     // generate cert chains / lists
     pki_gen_cmd("generate-certificate-lists", Some(&pki_cfg))?;
