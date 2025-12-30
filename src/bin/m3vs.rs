@@ -122,7 +122,7 @@ fn main() -> Result<()> {
             return Err(anyhow!("malformed line"));
         }
 
-        let micros: u32 = words[0].parse().context("parse f32 from str")?;
+        let micros: u32 = words[0].parse().context("parse u32 from str")?;
 
         if micros < data.min {
             data.min = micros;
