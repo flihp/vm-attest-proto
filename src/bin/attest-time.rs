@@ -19,7 +19,9 @@ use std::{
     },
     time::SystemTime,
 };
-use vm_attest_trait::{AttestMock, AttestationSigner, Nonce, VmInstanceConf};
+use vm_attest_trait::{
+    Nonce, VmInstanceAttestMock, VmInstanceAttester, VmInstanceConf,
+};
 
 mod config {
     include!(concat!(env!("OUT_DIR"), "/config.rs"));
@@ -132,7 +134,7 @@ fn main() -> Result<()> {
 
     // instantiate an `AttestMock` w/ the Oxide platform RoT instance requested
     // by the caller & the config
-    let attest = AttestMock::new(attest, instance_cfg);
+    let attest = VmInstanceAttestMock::new(attest, instance_cfg);
 
     // we do not care about the nonce, all 0's will require the same amount of
     // work from the underlying impl
@@ -142,7 +144,7 @@ fn main() -> Result<()> {
     // p256 public key
     let user_data = [0u8; 65];
 
-    // time calls to `AttestMock::attest`, output duration in µs
+    // time calls to `VmInstanceAttestMock::attest`, output duration in µs
     let mut count: usize = 0;
     while running.load(Ordering::SeqCst) {
         let time = SystemTime::now();
