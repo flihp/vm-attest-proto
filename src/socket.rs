@@ -4,19 +4,20 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
-    io::Read,
+    cell::RefCell,
+    io::{Read, Write},
     os::unix::net::{UnixListener, UnixStream},
 };
 
 use crate::{
-    mock::VmInstanceAttestMock,
     Attestation, CertChain, MeasurementLog, Nonce, VmInstanceAttester,
+    mock::VmInstanceAttestMock,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
 struct AttestData {
     nonce: Nonce,
-    data: Vec<u8>,
+    user_data: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -27,18 +28,25 @@ enum Command {
 // This type is used by clients to send commands and get responses from
 // an implementation of the VmInstanceAttest API over a socket
 pub struct VmInstanceAttestSocket {
-    _socket: UnixStream,
+    socket: RefCell<UnixStream>,
 }
 
 impl VmInstanceAttestSocket {
     pub fn new(socket: UnixStream) -> Self {
-        Self { _socket: socket }
+        Self {
+            socket: RefCell::new(socket),
+        }
     }
 }
 
 /// Errors returned when trying to sign an attestation
 #[derive(Debug, thiserror::Error)]
 pub enum VmInstanceAttestSocketError {
+    #[error("error deserializing a Command from JSON")]
+    CommandDeserialize(#[from] serde_json::Error),
+
+    #[error("error from the underlying socket")]
+    Socket(#[from] std::io::Error),
 }
 
 impl VmInstanceAttester for VmInstanceAttestSocket {
@@ -48,10 +56,20 @@ impl VmInstanceAttester for VmInstanceAttestSocket {
     // VmInstanceAttester::attest function
     fn attest(
         &self,
-        _nonce: &Nonce,
-        _user_data: &[u8],
+        nonce: &Nonce,
+        user_data: &[u8],
     ) -> Result<Vec<Attestation>, Self::Error> {
-        todo!("VmInstanceAttestSocket::attest");
+        let attest_data = AttestData {
+            nonce: nonce.clone(),
+            user_data: user_data.to_vec(),
+        };
+
+        let command = Command::Attest(attest_data);
+        let command = serde_json::to_string(&command)?;
+
+        self.socket.borrow_mut().write_all(command.as_bytes())?;
+
+        todo!("handle the response");
     }
 
     // serialize parames into message structure representing the
@@ -85,11 +103,14 @@ pub enum VmInstanceAttestSocketRunError {
 
     #[error("error deserializing data")]
     Serialize,
- }
+}
 
 impl VmInstanceAttestSocketServer {
     pub fn new(mock: VmInstanceAttestMock, listener: UnixListener) -> Self {
-        Self { _mock: mock, listener }
+        Self {
+            _mock: mock,
+            listener,
+        }
     }
 
     // message handling loop
@@ -102,13 +123,17 @@ impl VmInstanceAttestSocketServer {
             client.read_to_string(&mut msg)?;
 
             let command: Command = serde_json::from_str(&msg)?;
+            // TODO: logging
+            println!("command received: {command:?}");
             match command {
                 Command::Attest(_data) => {
-                    todo!("VmInstanceAttestSocketServer::run handle Attest command");
+                    todo!(
+                        "VmInstanceAttestSocketServer::run handle Attest command"
+                    );
                 }
             }
         }
 
         Ok(())
-     }
+    }
 }

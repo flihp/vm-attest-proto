@@ -8,7 +8,7 @@ pub mod mock;
 pub mod socket;
 
 /// User chosen value. Probably random data. Must not be reused.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Nonce([u8; 32]);
 
 impl Nonce {

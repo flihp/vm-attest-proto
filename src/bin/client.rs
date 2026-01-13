@@ -1,18 +1,17 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 
-use std::io::Write;
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::{os::unix::net::UnixStream, path::PathBuf};
+
+use vm_attest_trait::{
+    Nonce, VmInstanceAttester, socket::VmInstanceAttestSocket,
+};
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
     // Path to socket file. If file already exists an error is returned
     file: PathBuf,
-
-    // Message to send to server
-    message: String,
 }
 
 fn main() -> Result<()> {
@@ -22,7 +21,13 @@ fn main() -> Result<()> {
         return Err(anyhow!("socket file missing"));
     }
 
-    let mut stream = UnixStream::connect(&args.file).context("connec to socket")?;
+    let stream = UnixStream::connect(&args.file).context("connec to socket")?;
+    let attest = VmInstanceAttestSocket::new(stream);
 
-    Ok(stream.write_all(args.message.as_bytes()).context("write message to socket")?)
+    let nonce =
+        Nonce::from_platform_rng().context("Nonce from paltform RNG")?;
+    let data = vec![66, 77, 88, 99];
+    let _attestation = attest.attest(&nonce, &data)?;
+
+    Ok(())
 }
