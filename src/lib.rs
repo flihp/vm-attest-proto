@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod mock;
+pub mod socket;
 
 /// User chosen value. Probably random data. Must not be reused.
 #[derive(Debug, Deserialize, Serialize)]
