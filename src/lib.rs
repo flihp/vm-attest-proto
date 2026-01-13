@@ -2,10 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use serde::{Deserialize, Serialize};
+
 pub mod mock;
 
 /// User chosen value. Probably random data. Must not be reused.
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Nonce([u8; 32]);
 
 impl Nonce {
@@ -28,25 +30,28 @@ impl AsRef<[u8]> for Nonce {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub enum RotType {
     OxidePlatform,
     OxideInstance,
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Attestation {
     rot: RotType,
     data: Vec<u8>,
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct MeasurementLog {
     rot: RotType,
     data: Vec<u8>,
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct CertChain {
     rot: RotType,
     certs: Vec<Vec<u8>>,
@@ -69,4 +74,61 @@ pub trait VmInstanceAttester {
 
     /// Return the cert chain for the given RotType.
     fn get_cert_chains(&self) -> Result<Vec<CertChain>, Self::Error>;
+}
+
+#[cfg(test)]
+mod test {
+    use crate::*;
+    use std::io;
+
+    #[test]
+    fn nonce_to_json() {
+        let nonce =
+            Nonce::from_platform_rng().expect("Nonce from platform RNG");
+        let json = serde_json::to_string(&nonce).expect("Nonce to JSON");
+        println!("{json}");
+    }
+
+    #[test]
+    fn nonce_to_cbor() {
+        let nonce =
+            Nonce::from_platform_rng().expect("Nonce from platform RNG");
+        serde_cbor::to_writer(io::stdout(), &nonce).expect("Nonce to CBOR");
+    }
+
+    #[test]
+    fn rottype_to_json() {
+        let json = serde_json::to_string(&RotType::OxidePlatform)
+            .expect("RotType to JSON");
+        println!("{json}");
+    }
+
+    #[test]
+    fn rottype_to_cbor() {
+        serde_cbor::to_writer(io::stdout(), &RotType::OxidePlatform)
+            .expect("RotType to CBOR");
+    }
+
+    #[test]
+    fn attestation_to_json() {
+        let data = vec![0xde, 0xad, 0xbe, 0xef];
+        let attestation = Attestation {
+            rot: RotType::OxidePlatform,
+            data,
+        };
+        let json =
+            serde_json::to_string(&attestation).expect("RotType to JSON");
+        println!("{json}");
+    }
+
+    #[test]
+    fn attestation_to_cbor() {
+        let data = vec![0xde, 0xad, 0xbe, 0xef];
+        let attestation = Attestation {
+            rot: RotType::OxidePlatform,
+            data,
+        };
+        serde_cbor::to_writer(io::stdout(), &attestation)
+            .expect("RotType to CBOR");
+    }
 }
