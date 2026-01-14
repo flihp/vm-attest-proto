@@ -48,5 +48,10 @@ fn main() -> Result<()> {
     let cert_chains = attest.get_cert_chains().context("get cert chains")?;
     debug!("got cert chains: {cert_chains:?}");
 
+    let logs = attest
+        .get_measurement_logs()
+        .context("get measurement logs")?;
+    debug!("got measurement logs: {logs:?}");
+
     Ok(())
 }

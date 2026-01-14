@@ -26,6 +26,7 @@ struct AttestData {
 enum Command {
     Attest(AttestData),
     GetCertChains,
+    GetMeasurementLogs,
 }
 
 // This type is used by clients to send commands and get responses from
@@ -67,8 +68,7 @@ impl VmInstanceAttester for VmInstanceAttestSocket {
             user_data: user_data.to_vec(),
         };
 
-        let command = Command::Attest(attest_data);
-        let mut command = serde_json::to_string(&command)?;
+        let mut command = serde_json::to_string(&Command::Attest(attest_data))?;
         command.push('\n');
         let command = command;
 
@@ -90,8 +90,7 @@ impl VmInstanceAttester for VmInstanceAttestSocket {
     // serialize parames into message structure representing the
     // VmInstanceAttester::get_cert_chains
     fn get_cert_chains(&self) -> Result<Vec<CertChain>, Self::Error> {
-        let command = Command::GetCertChains;
-        let mut command = serde_json::to_string(&command)?;
+        let mut command = serde_json::to_string(&Command::GetCertChains)?;
         command.push('\n');
         let command = command;
 
@@ -113,7 +112,23 @@ impl VmInstanceAttester for VmInstanceAttestSocket {
     // serialize parames into message structure representing the
     // VmInstanceAttester::get_measurement_logs
     fn get_measurement_logs(&self) -> Result<Vec<MeasurementLog>, Self::Error> {
-        todo!("VmInstanceAttestSocket::get_measurement_logs");
+        let mut command = serde_json::to_string(&Command::GetMeasurementLogs)?;
+        command.push('\n');
+        let command = command;
+
+        debug!("writing command: {command}");
+        self.socket.borrow_mut().write_all(command.as_bytes())?;
+
+        let mut socket_mut = self.socket.borrow_mut();
+        let mut reader = BufReader::new(socket_mut.deref_mut());
+
+        let mut response = String::new();
+        reader.read_line(&mut response)?;
+
+        debug!("got response: {response}");
+        let logs: Vec<MeasurementLog> = serde_json::from_str(&response)?;
+
+        Ok(logs)
     }
 }
 
@@ -180,6 +195,11 @@ impl VmInstanceAttestSocketServer {
                         debug!("getting cert chains");
                         let cert_chains = self.mock.get_cert_chains()?;
                         serde_json::to_string(&cert_chains)?
+                    }
+                    Command::GetMeasurementLogs => {
+                        debug!("get measurement logs");
+                        let logs = self.mock.get_measurement_logs()?;
+                        serde_json::to_string(&logs)?
                     }
                 };
                 response.push('\n');
