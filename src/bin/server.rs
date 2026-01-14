@@ -4,7 +4,9 @@
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use clap_verbosity::{InfoLevel, Verbosity};
 use dice_verifier::AttestMock as OxAttestMock;
+use log::debug;
 
 use std::{fs, os::unix::net::UnixListener, path::PathBuf};
 
@@ -21,12 +23,20 @@ mod config {
 #[derive(Debug, Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    /// Dump debug output
+    #[command(flatten)]
+    verbose: Verbosity<InfoLevel>,
+
     // Path to socket file. If file already exists an error is returned.
     file: PathBuf,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    env_logger::Builder::new()
+        .filter_level(args.verbose.log_level_filter())
+        .init();
 
     if args.file.exists() {
         return Err(anyhow!("socket file exists"));
@@ -41,18 +51,21 @@ fn main() -> Result<()> {
         .context("create OxAttestMock from artifacts")?,
     );
 
+    debug!("reading VmInstanceRotMock config from file");
     let instance_cfg = fs::read_to_string(config::VM_INSTANCE_CFG)
-        .context("read ATTEST_INSTANCE_LOG to string")?;
+        .context("read ATTEST_INSTANCE_CFG to string")?;
     let instance_cfg: VmInstanceConf = serde_json::from_str(&instance_cfg)
         .context("parse JSON from mock cfg for instance RoT")?;
 
+    debug!("creating instance of VmInstanceAttestMock");
     // instantiate an `AttestMock` w/ the Oxide platform RoT instance requested
     // by the caller & the config
     let attest = VmInstanceAttestMock::new(oxide_platform_rot, instance_cfg);
 
+    debug!("binding to sock file: {:?}", &args.file);
     let listener =
         UnixListener::bind(&args.file).context("failed to bind to socket")?;
-    println!("Listening on socket {:?}", &args.file);
+    debug!("Listening on socket {:?}", &args.file);
 
     Ok(VmInstanceAttestSocketServer::new(attest, listener).run()?)
 }

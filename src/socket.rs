@@ -2,16 +2,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Write},
+    ops::DerefMut,
     os::unix::net::{UnixListener, UnixStream},
 };
 
 use crate::{
     Attestation, CertChain, MeasurementLog, Nonce, VmInstanceAttester,
-    mock::VmInstanceAttestMock,
+    mock::{VmInstanceAttestMock, VmInstanceAttestMockError},
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -65,11 +67,23 @@ impl VmInstanceAttester for VmInstanceAttestSocket {
         };
 
         let command = Command::Attest(attest_data);
-        let command = serde_json::to_string(&command)?;
+        let mut command = serde_json::to_string(&command)?;
+        command.push('\n');
+        let command = command;
 
+        debug!("writing command");
         self.socket.borrow_mut().write_all(command.as_bytes())?;
 
-        todo!("handle the response");
+        let mut socket_mut = self.socket.borrow_mut();
+        let mut reader = BufReader::new(socket_mut.deref_mut());
+
+        let mut response = String::new();
+        reader.read_line(&mut response)?;
+
+        debug!("got response: {response}");
+        let attestations: Vec<Attestation> = serde_json::from_str(&response)?;
+
+        Ok(attestations)
     }
 
     // serialize parames into message structure representing the
@@ -88,13 +102,16 @@ impl VmInstanceAttester for VmInstanceAttestSocket {
 /// This type acts as a socket server accepting encoded messages that
 /// correspond to functions from the VmInstanceAttester.
 pub struct VmInstanceAttestSocketServer {
-    _mock: VmInstanceAttestMock,
+    mock: VmInstanceAttestMock,
     listener: UnixListener,
 }
 
 /// Possible errors from `VmInstanceAttestSocketServer::run`
 #[derive(Debug, thiserror::Error)]
 pub enum VmInstanceAttestSocketRunError {
+    #[error("error from underlying VmInstanceRoT mock")]
+    MockRotError(#[from] VmInstanceAttestMockError),
+
     #[error("error deserializing Command from JSON")]
     CommandDeserialize(#[from] serde_json::Error),
 
@@ -107,31 +124,40 @@ pub enum VmInstanceAttestSocketRunError {
 
 impl VmInstanceAttestSocketServer {
     pub fn new(mock: VmInstanceAttestMock, listener: UnixListener) -> Self {
-        Self {
-            _mock: mock,
-            listener,
-        }
+        Self { mock, listener }
     }
 
     // message handling loop
     pub fn run(&self) -> Result<(), VmInstanceAttestSocketRunError> {
+        debug!("listening for clients");
+
         let mut msg = String::new();
         for client in self.listener.incoming() {
+            debug!("new connection");
+
             // `incoming` yeilds iterator over a Result
             let mut client = client?;
 
-            client.read_to_string(&mut msg)?;
+            let mut reader = BufReader::new(&mut client);
+            reader.read_line(&mut msg)?;
+            debug!("string received: {msg}");
 
             let command: Command = serde_json::from_str(&msg)?;
-            // TODO: logging
-            println!("command received: {command:?}");
-            match command {
-                Command::Attest(_data) => {
-                    todo!(
-                        "VmInstanceAttestSocketServer::run handle Attest command"
-                    );
+            debug!("command received: {command:?}");
+
+            let mut response = match command {
+                Command::Attest(data) => {
+                    debug!("getting attestation");
+                    let attestations =
+                        self.mock.attest(&data.nonce, &data.user_data)?;
+                    serde_json::to_string(&attestations)?
                 }
-            }
+            };
+            response.push('\n');
+
+            debug!("sending response: {response}");
+            client.write_all(response.as_bytes())?;
+            msg.clear();
         }
 
         Ok(())
