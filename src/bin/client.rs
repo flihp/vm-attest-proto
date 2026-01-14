@@ -45,5 +45,8 @@ fn main() -> Result<()> {
         attest.attest(&nonce, &data).context("get attestations")?;
     debug!("got attestations: {attestations:?}");
 
+    let cert_chains = attest.get_cert_chains().context("get cert chains")?;
+    debug!("got cert chains: {cert_chains:?}");
+
     Ok(())
 }

@@ -25,6 +25,7 @@ struct AttestData {
 #[derive(Debug, Deserialize, Serialize)]
 enum Command {
     Attest(AttestData),
+    GetCertChains,
 }
 
 // This type is used by clients to send commands and get responses from
@@ -87,15 +88,32 @@ impl VmInstanceAttester for VmInstanceAttestSocket {
     }
 
     // serialize parames into message structure representing the
-    // VmInstanceAttester::get_measurement_logs
-    fn get_measurement_logs(&self) -> Result<Vec<MeasurementLog>, Self::Error> {
-        todo!("VmInstanceAttestSocket::get_measurement_logs");
+    // VmInstanceAttester::get_cert_chains
+    fn get_cert_chains(&self) -> Result<Vec<CertChain>, Self::Error> {
+        let command = Command::GetCertChains;
+        let mut command = serde_json::to_string(&command)?;
+        command.push('\n');
+        let command = command;
+
+        debug!("writing command: {command}");
+        self.socket.borrow_mut().write_all(command.as_bytes())?;
+
+        let mut socket_mut = self.socket.borrow_mut();
+        let mut reader = BufReader::new(socket_mut.deref_mut());
+
+        let mut response = String::new();
+        reader.read_line(&mut response)?;
+
+        debug!("got response: {response}");
+        let cert_chains: Vec<CertChain> = serde_json::from_str(&response)?;
+
+        Ok(cert_chains)
     }
 
     // serialize parames into message structure representing the
-    // VmInstanceAttester::get_cert_chains
-    fn get_cert_chains(&self) -> Result<Vec<CertChain>, Self::Error> {
-        todo!("VmInstanceAttestSocket::get_cert_chains");
+    // VmInstanceAttester::get_measurement_logs
+    fn get_measurement_logs(&self) -> Result<Vec<MeasurementLog>, Self::Error> {
+        todo!("VmInstanceAttestSocket::get_measurement_logs");
     }
 }
 
@@ -133,31 +151,43 @@ impl VmInstanceAttestSocketServer {
 
         let mut msg = String::new();
         for client in self.listener.incoming() {
-            debug!("new connection");
+            debug!("new client");
 
             // `incoming` yeilds iterator over a Result
             let mut client = client?;
-
-            let mut reader = BufReader::new(&mut client);
-            reader.read_line(&mut msg)?;
-            debug!("string received: {msg}");
-
-            let command: Command = serde_json::from_str(&msg)?;
-            debug!("command received: {command:?}");
-
-            let mut response = match command {
-                Command::Attest(data) => {
-                    debug!("getting attestation");
-                    let attestations =
-                        self.mock.attest(&data.nonce, &data.user_data)?;
-                    serde_json::to_string(&attestations)?
+            loop {
+                // would like to do this before `loop` but we need to write to
+                // the client as well
+                let mut reader = BufReader::new(&mut client);
+                let count = reader.read_line(&mut msg)?;
+                if count == 0 {
+                    debug!("read 0 bytes: EOF");
+                    break;
                 }
-            };
-            response.push('\n');
 
-            debug!("sending response: {response}");
-            client.write_all(response.as_bytes())?;
-            msg.clear();
+                debug!("string received: {msg}");
+                let command: Command = serde_json::from_str(&msg)?;
+                debug!("command received: {command:?}");
+
+                let mut response = match command {
+                    Command::Attest(data) => {
+                        debug!("getting attestation");
+                        let attestations =
+                            self.mock.attest(&data.nonce, &data.user_data)?;
+                        serde_json::to_string(&attestations)?
+                    }
+                    Command::GetCertChains => {
+                        debug!("getting cert chains");
+                        let cert_chains = self.mock.get_cert_chains()?;
+                        serde_json::to_string(&cert_chains)?
+                    }
+                };
+                response.push('\n');
+
+                debug!("sending response: {response}");
+                client.write_all(response.as_bytes())?;
+                msg.clear();
+            }
         }
 
         Ok(())
