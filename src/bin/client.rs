@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use clap_verbosity::{InfoLevel, Verbosity};
 use dice_verifier::{
-    Attestation as OxAttestation, Log,
+    Attestation as OxAttestation, Corim, Log, MeasurementSet, ReferenceMeasurements,
 };
 
 use log::{debug, info};
@@ -11,7 +11,7 @@ use std::{fs, os::unix::net::UnixStream, path::PathBuf};
 use x509_cert::{Certificate, der::Decode};
 
 use vm_attest_trait::{
-    Nonce, RotType, VmInstanceAttester, socket::VmInstanceAttestSocket,
+    Nonce, RotType, VmInstanceAttester, mock::VmInstanceConf, socket::VmInstanceAttestSocket,
 };
 
 #[derive(Debug, Parser)]
@@ -27,6 +27,12 @@ struct Args {
     #[clap(long, default_value_t = false)]
     self_signed: bool,
 
+    #[clap(long)]
+    reference_measurements: Vec<PathBuf>,
+
+    #[clap(long)]
+    vm_instance_cfg: PathBuf,
+
     // Path to socket file. If file already exists an error is returned
     file: PathBuf,
 }
@@ -38,10 +44,22 @@ fn main() -> Result<()> {
         .filter_level(args.verbose.log_level_filter())
         .init();
 
+    // fail early if the socket file doesn't exist
     if !args.file.exists() {
         return Err(anyhow!("socket file missing"));
     }
 
+    // load reference integrity measurements from CORIMs
+    let mut corims = Vec::new();
+    for corim in &args.reference_measurements {
+        let corim = Corim::from_file(corim).with_context(|| format!("loading CORIM from: {}", corim.display()))?;
+        corims.push(corim);
+    }
+    let rims = ReferenceMeasurements::try_from(corims.as_slice())
+        .context("Reference measurements from CORIMs")?;
+    debug!("loaded reference integrity measurements");
+
+    // load the provided root certs
     let root_cert = match args.root_cert {
         Some(path) => {
             let root_cert = fs::read(&path)
@@ -61,11 +79,18 @@ fn main() -> Result<()> {
             }
         }
     };
-
     debug!("loaded root certs: {:?}", root_cert);
 
-    debug!("creating socket");
+    // construct a `VmInstanceConf` from test data
+    // this is our reference for appraising the log produced by the
+    // `RotType::OxideInstance`
+    let instance_rim = fs::read_to_string(&args.vm_instance_cfg)
+        .context("read ATTEST_INSTANCE_LOG to string")?;
+    let instance_rim: VmInstanceConf = serde_json::from_str(&instance_rim)
+        .context("parse JSON from rim for instance RoT log")?;
+
     let stream = UnixStream::connect(&args.file).context("connec to socket")?;
+    debug!("connected to socket");
     let attest = VmInstanceAttestSocket::new(stream);
 
     let nonce =
@@ -80,6 +105,9 @@ fn main() -> Result<()> {
     for cert_chain in &cert_chains {
         match cert_chain.rot {
             RotType::OxidePlatform => {
+                // TODO: having access to each cert chain as a Vec<Certificate>
+                // for future use would be nice ... maybe a HashMap keyed on
+                // the RotType.
                 let mut cert_chain_pem = Vec::new();
                 for cert in &cert_chain.certs {
                     cert_chain_pem.push(
@@ -189,6 +217,63 @@ fn main() -> Result<()> {
         return Err(anyhow!("attestation verification failed"));
     } else {
         info!("attestation verified");
+    }
+
+    // get cert chain required to reconstruct the collection of measurements
+    // from the Oxide Platform RoT
+    let oxplatform_rot_cert_chain = cert_chains.iter().find_map(|cert_chain| {
+        if cert_chain.rot == RotType::OxidePlatform {
+            Some(cert_chain)
+        } else {
+            None
+        }
+    });
+    let oxplatform_rot_cert_chain = if let Some(cert_chain) = oxplatform_rot_cert_chain {
+        cert_chain
+    } else {
+        return Err(anyhow!("No cert chain for RotType::OxidePlatform"));
+    };
+
+    for log in &logs {
+        match log.rot {
+            RotType::OxidePlatform => {
+                // use dice-verifier crate to use the RIMs to appraise the
+                // log from the OxidePlatform RoT
+                let (log, _): (Log, _) = hubpack::deserialize(&log.data)
+                    .context("deserialize hubpacked log from Oxide Platform RoT")?;
+                let mut cert_chain_pem = Vec::new();
+                for cert in &oxplatform_rot_cert_chain.certs {
+                    cert_chain_pem.push(
+                        Certificate::from_der(&cert)
+                            .context("Certificate from DER")?,
+                    );
+                }
+
+                let measurements =
+                    MeasurementSet::from_artifacts(&cert_chain_pem, &log)
+                        .expect("MeasurementSet from PkiPath and Log");
+
+                dice_verifier::verify_measurements(
+                    &measurements,
+                    &rims,
+                ).context("appraising measurements")?;
+                info!("measurement log from Oxide Platform RoT appraised");
+            }
+            RotType::OxideInstance => {
+                // compare log / config description from the OxideInstance
+                // RoT to the reference from the config reference
+                let instance_cfg = std::str::from_utf8(&log.data)
+                    .expect("utf8 from log data");
+                let instance_cfg: VmInstanceConf =
+                    serde_json::from_str(instance_cfg)
+                        .expect("parse JSON from log data");
+
+                if instance_rim != instance_cfg {
+                    return Err(anyhow!("appraisal of measurements from VmInstanceRot failed"));
+                }
+                info!("metadata from Oxide VM Instance RoT appraised");
+            }
+        }
     }
 
     Ok(())
