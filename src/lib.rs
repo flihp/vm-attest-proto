@@ -40,22 +40,22 @@ pub enum RotType {
 #[allow(dead_code)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Attestation {
-    rot: RotType,
-    data: Vec<u8>,
+    pub rot: RotType,
+    pub data: Vec<u8>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MeasurementLog {
-    rot: RotType,
-    data: Vec<u8>,
+    pub rot: RotType,
+    pub data: Vec<u8>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CertChain {
-    rot: RotType,
-    certs: Vec<Vec<u8>>,
+    pub rot: RotType,
+    pub certs: Vec<Vec<u8>>,
 }
 
 /// An interface for obtaining attestations and supporting data from the VM
